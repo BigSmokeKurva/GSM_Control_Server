@@ -1101,10 +1101,11 @@ namespace Program
         async Task DefaultRoute(HttpContext ctx)
         {
             string resp = "Нахуй пошел, тебе тут не место.";
-            ctx.Response.StatusCode = 200;
-            ctx.Response.ContentLength = resp.Length;
             ctx.Response.ContentType = "text/html; charset=utf-8";
-            await ctx.Response.SendAsync(resp);
+            var bresponse = Encoding.UTF8.GetBytes(resp);
+            ctx.Response.ContentLength = bresponse.Length;
+            await ctx.Response.SendAsync(bresponse);
+            await ctx.Response.SendAsync(bresponse);
         }
 
         // http://localhost:9710/tyujt55hftghj56esdggj5yfgbn5dfg/GetPorts
@@ -1140,8 +1141,9 @@ namespace Program
                 json += "}";
                 response = json;
             }
-            ctx.Response.ContentLength = response.Length;
-            await ctx.Response.SendAsync(response);
+            var bresponse = Encoding.UTF8.GetBytes(response);
+            ctx.Response.ContentLength = bresponse.Length;
+            await ctx.Response.SendAsync(bresponse);
             return;
         }
 
@@ -1169,8 +1171,9 @@ namespace Program
                     }
                 }
             }
-            ctx.Response.ContentLength = response.Length;
-            await ctx.Response.SendAsync(response);
+            var bresponse = Encoding.UTF8.GetBytes(response);
+            ctx.Response.ContentLength = bresponse.Length;
+            await ctx.Response.SendAsync(bresponse);
             return;
         }
 
@@ -1191,8 +1194,9 @@ namespace Program
                 response = "";
                 gsmControlClass.ports[$"Port {ctx.Request.Url.Parameters["portNum"]}"]["messages"].Clear();
             }
-            ctx.Response.ContentLength = response.Length;
-            await ctx.Response.SendAsync(response);
+            var bresponse = Encoding.UTF8.GetBytes(response);
+            ctx.Response.ContentLength = bresponse.Length;
+            await ctx.Response.SendAsync(bresponse);
             return;
         }
     }
