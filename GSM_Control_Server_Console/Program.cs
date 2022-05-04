@@ -1,5 +1,4 @@
 ﻿using HttpServerLite;
-using System.Globalization;
 using System.IO.Ports;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -976,7 +975,7 @@ namespace Program
                 using var port = new SerialPort(portName, 115200, Parity.None, 8, StopBits.One);
                 port.Open();
                 var gsmInfo = gsmRegex.Replace(SendCommand(port: port, command: "ATI", timeout: 3000).Replace("\n", "|"), string.Empty);
-                if(gsmInfo.Length < 5)
+                if (gsmInfo.Length < 5)
                 {
                     continue;
                 }
@@ -1094,21 +1093,21 @@ namespace Program
 
         public void Start()
         {
-            server = new Webserver("localhost", 9000, false, null, null, DefaultRoute);
+            server = new Webserver("0.0.0.0", 9710, false, null, null, DefaultRoute);
             server.Start();
             Console.WriteLine("WebServer started!");
         }
-        // http://localhost:9000
+        // http://localhost:9710
         async Task DefaultRoute(HttpContext ctx)
         {
             string resp = "Нахуй пошел, тебе тут не место.";
             ctx.Response.StatusCode = 200;
-            ctx.Response.ContentLength = 8000;
+            ctx.Response.ContentLength = resp.Length;
             ctx.Response.ContentType = "text/html; charset=utf-8";
             await ctx.Response.SendAsync(resp);
         }
 
-        // http://localhost:9000/tyujt55hftghj56esdggj5yfgbn5dfg/GetPorts
+        // http://localhost:9710/tyujt55hftghj56esdggj5yfgbn5dfg/GetPorts
         [ParameterRoute(HttpMethod.GET, "/{apikey}/GetPorts")]
         public async Task GetPortsRoute(HttpContext ctx)
         {
@@ -1141,12 +1140,12 @@ namespace Program
                 json += "}";
                 response = json;
             }
-            ctx.Response.ContentLength = response.Length * 200;
+            ctx.Response.ContentLength = response.Length;
             await ctx.Response.SendAsync(response);
             return;
         }
 
-        // http://localhost:9000/tyujt55hftghj56esdggj5yfgbn5dfg/GetMsgs/Port/1
+        // http://localhost:9710/tyujt55hftghj56esdggj5yfgbn5dfg/GetMsgs/Port/1
         [ParameterRoute(HttpMethod.GET, "/{apikey}/GetMsgs/Port/{portNum}")]
         public async Task GetMsgsRoute(HttpContext ctx)
         {
@@ -1161,16 +1160,16 @@ namespace Program
             else
             {
                 response = "";
-                if(gsmControlClass.ports[$"Port {ctx.Request.Url.Parameters["portNum"]}"]["messages"].Count  == 0) response = "No messages";
+                if (gsmControlClass.ports[$"Port {ctx.Request.Url.Parameters["portNum"]}"]["messages"].Count == 0) response = "No messages";
                 else
                 {
-                    foreach(string message in gsmControlClass.ports[$"Port {ctx.Request.Url.Parameters["portNum"]}"]["messages"])
+                    foreach (string message in gsmControlClass.ports[$"Port {ctx.Request.Url.Parameters["portNum"]}"]["messages"])
                     {
                         response += message + "\n";
                     }
                 }
             }
-            ctx.Response.ContentLength = response.Length * 200;
+            ctx.Response.ContentLength = response.Length;
             await ctx.Response.SendAsync(response);
             return;
         }
@@ -1192,7 +1191,7 @@ namespace Program
                 response = "";
                 gsmControlClass.ports[$"Port {ctx.Request.Url.Parameters["portNum"]}"]["messages"].Clear();
             }
-            ctx.Response.ContentLength = response.Length * 200;
+            ctx.Response.ContentLength = response.Length;
             await ctx.Response.SendAsync(response);
             return;
         }
