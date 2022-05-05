@@ -940,6 +940,7 @@ namespace Program
         // group
         Regex sendedRegex = new(",\"(.*?)\",");
         Regex phoneNumberRegex = new(":(.*).");
+        Regex cNumRegex = new(",\"(.*?)\",");
         string HexToString(string hex) => Encoding.BigEndianUnicode.GetString(Convert.FromHexString(hex));
         string GetOperator(string imsi)
         {
@@ -1009,79 +1010,89 @@ namespace Program
             using var port = new SerialPort(ports[$"Port {portNum}"]["comName"], 115200, Parity.None, 8, StopBits.One);
             string answer;
             string _operator;
-            port.Open();
+            
             Console.WriteLine($"Port {portNum} ({ports[$"Port {portNum}"]["comName"]}) started.");
             while (true)
             {
-                Thread.Sleep(2300);
-                var imsi = SendCommand(port, "AT+CIMI", 3000);
-                if (imsi.Length < 5)
+                try
                 {
-                    ports[$"Port {portNum}"]["imsi"] = string.Empty;
-                    ports[$"Port {portNum}"]["operator"] = string.Empty;
-                    ports[$"Port {portNum}"]["phoneNumber"] = string.Empty;
-                    ports[$"Port {portNum}"]["availability"] = false;
-                    continue;
-                }
-                _operator = GetOperator(imsi);
-                // avab = false | imsi !=
-                if (!ports[$"Port {portNum}"]["availability"] || ports[$"Port {portNum}"]["imsi"] != imsi)
-                {
-                    ports[$"Port {portNum}"]["imsi"] = string.Empty;
-                    ports[$"Port {portNum}"]["operator"] = string.Empty;
-                    ports[$"Port {portNum}"]["phoneNumber"] = string.Empty;
-                    ports[$"Port {portNum}"]["availability"] = false;
-                    // Удалить все сообщения
-                    SendCommand(port, "AT+CMGD=2,4", 1000);
-                    // Получить номер
-                    if (_operator == "MTS")
+                    Thread.Sleep(2300);
+                    if(!port.IsOpen) port.Open();
+                    var imsi = SendCommand(port, "AT+CIMI", 3000);
+                    if (imsi.Length < 5)
                     {
-                        answer = SendCommand(port, "AT+CUSD=1,\"*111*0887#\",15", 7000);
-                        var answerMessage = HexToString(sendedRegex.Match(answer).Groups[1].Value);
-                        if (!answerMessage.Contains("Запрос отправлен")) continue;
-                        for (var i = 0; i < 80; i++)
+                        ports[$"Port {portNum}"]["imsi"] = string.Empty;
+                        ports[$"Port {portNum}"]["operator"] = string.Empty;
+                        ports[$"Port {portNum}"]["phoneNumber"] = string.Empty;
+                        ports[$"Port {portNum}"]["availability"] = false;
+                        continue;
+                    }
+                    _operator = GetOperator(imsi);
+                    // avab = false | imsi !=
+                    if (!ports[$"Port {portNum}"]["availability"] || ports[$"Port {portNum}"]["imsi"] != imsi)
+                    {
+                        ports[$"Port {portNum}"]["imsi"] = string.Empty;
+                        ports[$"Port {portNum}"]["operator"] = string.Empty;
+                        ports[$"Port {portNum}"]["phoneNumber"] = string.Empty;
+                        ports[$"Port {portNum}"]["availability"] = false;
+                        // Удалить все сообщения
+                        SendCommand(port, "AT+CMGD=2,4", 1000);
+                        // Получить номер
+                        if (_operator == "MTS")
                         {
-                            if (ports[$"Port {portNum}"]["phoneNumber"] != string.Empty) break;
-                            Thread.Sleep(1000);
-                            answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000);
-                            foreach (var message in answer.Split("+CMGL"))
+                            answer = SendCommand(port, "AT+CUSD=1,\"*111*0887#\",15", 7000);
+                            var answerMessage = HexToString(sendedRegex.Match(answer).Groups[1].Value);
+                            if (!answerMessage.Contains("Запрос отправлен")) continue;
+                            for (var i = 0; i < 80; i++)
                             {
-                                var from = fromRegex.Match(message).Groups[1].Value;
-                                if (from != "111") continue;
-                                var _message = HexToString(message.Split("\n")[1].Trim());
-                                if (!_message.Contains("Ваш номер")) continue;
-                                var phoneNumber = phoneNumberRegex.Match(_message).Groups[1].Value;
-                                ports[$"Port {portNum}"]["imsi"] = imsi;
-                                ports[$"Port {portNum}"]["operator"] = _operator;
-                                ports[$"Port {portNum}"]["phoneNumber"] = phoneNumber;
-                                ports[$"Port {portNum}"]["availability"] = true;
-                                break;
+                                if (ports[$"Port {portNum}"]["phoneNumber"] != string.Empty) break;
+                                Thread.Sleep(1000);
+                                answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000);
+                                foreach (var message in answer.Split("+CMGL"))
+                                {
+                                    var from = fromRegex.Match(message).Groups[1].Value;
+                                    if (from != "111") continue;
+                                    var _message = HexToString(message.Split("\n")[1].Trim());
+                                    if (!_message.Contains("Ваш номер")) continue;
+                                    var phoneNumber = phoneNumberRegex.Match(_message).Groups[1].Value;
+                                    ports[$"Port {portNum}"]["imsi"] = imsi;
+                                    ports[$"Port {portNum}"]["operator"] = _operator;
+                                    ports[$"Port {portNum}"]["phoneNumber"] = phoneNumber;
+                                    ports[$"Port {portNum}"]["availability"] = true;
+                                    break;
+                                }
+                                SendCommand(port, "AT+CMGD=2,1", 1000);
                             }
-                            SendCommand(port, "AT+CMGD=2,1", 1000);
                         }
+                        else if (_operator == "Operator not found") continue;
+                        else
+                        {
+                            answer = SendCommand(port, "AT+CNUM", 3000);
+                            var phoneNumber = cNumRegex.Match(answer).Groups[1].Value;
+                            ports[$"Port {portNum}"]["imsi"] = imsi;
+                            ports[$"Port {portNum}"]["operator"] = _operator;
+                            ports[$"Port {portNum}"]["phoneNumber"] = phoneNumber;
+                            ports[$"Port {portNum}"]["availability"] = true;
+                        }
+                        // Удалить все сообщения
+                        SendCommand(port, "AT+CMGD=2,4", 1000);
                     }
-                    else if (_operator == "Operator not found") continue;
-                    else
+                    // Получение смс
+                    answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000);
+                    foreach (var message in answer.Split("+CMGL"))
                     {
-                        // TODO
+                        if (message.Length == 0) continue;
+                        string from;
+                        string _message;
+                        string receivedTime;
+                        from = fromRegex.Match(message).Groups[1].Value;
+                        _message = HexToString(message.Split("\n")[1].Trim());
+                        receivedTime = receivedTimeRegex.Match(message).Groups[1].Value;
+                        ports[$"Port {portNum}"]["messages"].Add($"{receivedTime}|{from}|{_message}");
                     }
-                    // Удалить все сообщения
-                    SendCommand(port, "AT+CMGD=2,4", 1000);
+                    SendCommand(port, "AT+CMGD=2,1", 1000);
                 }
-                // Получение смс
-                answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000);
-                foreach (var message in answer.Split("+CMGL"))
-                {
-                    if (message.Length == 0) continue;
-                    string from;
-                    string _message;
-                    string receivedTime;
-                    from = fromRegex.Match(message).Groups[1].Value;
-                    _message = HexToString(message.Split("\n")[1].Trim());
-                    receivedTime = receivedTimeRegex.Match(message).Groups[1].Value;
-                    ports[$"Port {portNum}"]["messages"].Add($"{receivedTime}|{from}|{_message}");
-                }
-                SendCommand(port, "AT+CMGD=2,1", 1000);
+                catch { }
             }
         }
     }
@@ -1089,7 +1100,7 @@ namespace Program
     {
         public GSMControl gsmControlClass = Program.gsmControlClass;
         Webserver server;
-        const string api = "tyujt55hftghj56esdggj5yfgbn5dfg";
+        const string api = "rty7u467rtuty4567tyj45y";
 
         public void Start()
         {
@@ -1104,7 +1115,6 @@ namespace Program
             ctx.Response.ContentType = "text/html; charset=utf-8";
             var bresponse = Encoding.UTF8.GetBytes(resp);
             ctx.Response.ContentLength = bresponse.Length;
-            await ctx.Response.SendAsync(bresponse);
             await ctx.Response.SendAsync(bresponse);
         }
 
