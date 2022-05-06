@@ -955,12 +955,20 @@ namespace Program
         }
         string SendCommand(SerialPort port, string command, int timeout)
         {
+            // Я не знаю каким способом, но это пофиксило один баг
+            while (port.ReadExisting().Trim().Length != 0)
+            {
+                port.DiscardOutBuffer();
+                port.DiscardInBuffer();
+                port.BaseStream.Flush();
+                Thread.Sleep(700);
+            }
             string answer = "";
             port.WriteLine(command);
             for (var i = 0; i < timeout / 100; i++)
             {
                 Thread.Sleep(100);
-                answer = port.ReadExisting().Replace("OK", "").Trim();
+                answer = port.ReadExisting().Replace("OK", "").Replace(command, string.Empty).Trim();
                 if (answer.Length > 0)
                 {
                     break;
@@ -1002,15 +1010,15 @@ namespace Program
                 port.Close();
                 portNum++;
             }
-            for (var i = 1; i < ports.Values.Count; i++) new Thread(() => ThreadPortChecker(i)).Start();
+            foreach (var portName in ports.Keys) new Thread(() => ThreadPortChecker(int.Parse(portName.Split(" ")[1]))).Start();
 
         }
         public void ThreadPortChecker(int portNum)
         {
-            using var port = new SerialPort(ports[$"Port {portNum}"]["comName"], 115200, Parity.None, 8, StopBits.One);
             string answer;
             string _operator;
-            
+            using var port = new SerialPort(ports[$"Port {portNum}"]["comName"], 115200, Parity.None, 8, StopBits.One);
+
             Console.WriteLine($"Port {portNum} ({ports[$"Port {portNum}"]["comName"]}) started.");
             while (true)
             {
@@ -1018,6 +1026,7 @@ namespace Program
                 {
                     Thread.Sleep(2300);
                     if(!port.IsOpen) port.Open();
+
                     var imsi = SendCommand(port, "AT+CIMI", 3000);
                     if (imsi.Length < 5)
                     {
@@ -1029,7 +1038,7 @@ namespace Program
                     }
                     _operator = GetOperator(imsi);
                     // avab = false | imsi !=
-                    if (!ports[$"Port {portNum}"]["availability"] || ports[$"Port {portNum}"]["imsi"] != imsi)
+                    if (!ports[$"Port {portNum}"]["availability"] || ports[$"Port {portNum}"]["imsi"] != imsi || ports[$"Port {portNum}"]["phoneNumber"].Length == 0)
                     {
                         ports[$"Port {portNum}"]["imsi"] = string.Empty;
                         ports[$"Port {portNum}"]["operator"] = string.Empty;
@@ -1040,6 +1049,8 @@ namespace Program
                         // Получить номер
                         if (_operator == "MTS")
                         {
+
+                            //SendCommand(port: port, command: "AT+CMGF=1", timeout: 1500);
                             answer = SendCommand(port, "AT+CUSD=1,\"*111*0887#\",15", 7000);
                             var answerMessage = HexToString(sendedRegex.Match(answer).Groups[1].Value);
                             if (!answerMessage.Contains("Запрос отправлен")) continue;
@@ -1075,6 +1086,8 @@ namespace Program
                             ports[$"Port {portNum}"]["availability"] = true;
                         }
                         // Удалить все сообщения
+                        ports[$"Port {portNum}"]["messages"].Clear();
+                        // Для мтс не всегда работает
                         SendCommand(port, "AT+CMGD=2,4", 1000);
                     }
                     // Получение смс
@@ -1086,13 +1099,15 @@ namespace Program
                         string _message;
                         string receivedTime;
                         from = fromRegex.Match(message).Groups[1].Value;
-                        _message = HexToString(message.Split("\n")[1].Trim());
+                        _message = HexToString(message.Split("\n")[1].Replace("\n", string.Empty).Trim());
                         receivedTime = receivedTimeRegex.Match(message).Groups[1].Value;
                         ports[$"Port {portNum}"]["messages"].Add($"{receivedTime}|{from}|{_message}");
                     }
                     SendCommand(port, "AT+CMGD=2,1", 1000);
                 }
-                catch { }
+                catch
+                {
+                }
             }
         }
     }
@@ -1100,11 +1115,10 @@ namespace Program
     {
         public GSMControl gsmControlClass = Program.gsmControlClass;
         Webserver server;
-        const string api = "rty7u467rtuty4567tyj45y";
 
         public void Start()
         {
-            server = new Webserver("0.0.0.0", 9710, false, null, null, DefaultRoute);
+            server = new Webserver(Program.ip, Program.port, false, null, null, DefaultRoute);
             server.Start();
             Console.WriteLine("WebServer started!");
         }
@@ -1125,9 +1139,8 @@ namespace Program
             ctx.Response.StatusCode = 200;
             ctx.Response.ContentType = "application/json; charset=utf-8";
             string response;
-            if (ctx.Request.Url.Parameters["apikey"] != api)
+            if (ctx.Request.Url.Parameters["apikey"] != Program.api)
             {
-                Console.WriteLine(gsmControlClass);
                 response = "Invalid apikey";
             }
             else
@@ -1164,9 +1177,8 @@ namespace Program
             ctx.Response.StatusCode = 200;
             ctx.Response.ContentType = "application/json; charset=utf-8";
             string response;
-            if (ctx.Request.Url.Parameters["apikey"] != api)
+            if (ctx.Request.Url.Parameters["apikey"] != Program.api)
             {
-                Console.WriteLine(gsmControlClass);
                 response = "Invalid apikey";
             }
             else
@@ -1194,9 +1206,8 @@ namespace Program
             ctx.Response.StatusCode = 200;
             ctx.Response.ContentType = "application/json; charset=utf-8";
             string response;
-            if (ctx.Request.Url.Parameters["apikey"] != api)
+            if (ctx.Request.Url.Parameters["apikey"] != Program.api)
             {
-                Console.WriteLine(gsmControlClass);
                 response = "Invalid apikey";
             }
             else
@@ -1214,18 +1225,24 @@ namespace Program
     {
         static public GSMControl gsmControlClass = new();
         static WebServer webserver = new();
+        public static readonly string ip = "0.0.0.0";
+        public static readonly int port = 9710;
+        public static readonly string api = "rty7u467rtuty4567tyj45y";
         public static void Main()
         {
             gsmControlClass.Start();
             webserver.Start();
+
             while (true)
             {
                 Thread.Sleep(2000);
                 Console.Clear();
+                Console.WriteLine($"Count ports: {gsmControlClass.ports.Values.Count}.");
                 for (var i = 1; i <= gsmControlClass.ports.Values.Count; i++)
                 {
-                    Console.WriteLine($"Port {i} ({gsmControlClass.ports[$"Port {i}"]["comName"]}) - availability: {gsmControlClass.ports[$"Port {i}"]["availability"]}; messagesCount: {gsmControlClass.ports[$"Port {i}"]["messages"].Count}; phoneNumber: {gsmControlClass.ports[$"Port {i}"]["phoneNumber"]}");
+                    Console.WriteLine($"Port {i} ({gsmControlClass.ports[$"Port {i}"]["comName"]}) - availability: {gsmControlClass.ports[$"Port {i}"]["availability"]}; messagesCount: {gsmControlClass.ports[$"Port {i}"]["messages"].Count}; phoneNumber: {gsmControlClass.ports[$"Port {i}"]["phoneNumber"]}.");
                 }
+                Console.WriteLine($"Web server started - {ip}:{port}.");
             }
         }
     }
