@@ -941,6 +941,7 @@ namespace Program
         Regex sendedRegex = new(",\"(.*?)\",");
         Regex phoneNumberRegex = new(":(.*).");
         Regex cNumRegex = new(",\"(.*?)\",");
+        Regex imsiRegex = new(@"[a-zA-Z : +]+");
         string HexToString(string hex) => Encoding.BigEndianUnicode.GetString(Convert.FromHexString(hex));
         string GetOperator(string imsi)
         {
@@ -953,26 +954,20 @@ namespace Program
             }
             return "Operator not found";
         }
-        string SendCommand(SerialPort port, string command, int timeout)
+        string SendCommand(SerialPort port, string command, int timeout, int sleep=150)
         {
-            // Я не знаю каким способом, но это пофиксило один баг
-            while (port.ReadExisting().Trim().Length != 0)
+            while(port.BytesToRead != 0)
             {
-                port.DiscardOutBuffer();
-                port.DiscardInBuffer();
-                port.BaseStream.Flush();
-                Thread.Sleep(700);
+                Thread.Sleep(50);
+                port.ReadExisting();
             }
             string answer = "";
             port.WriteLine(command);
             for (var i = 0; i < timeout / 100; i++)
             {
-                Thread.Sleep(100);
-                answer = port.ReadExisting().Replace("OK", "").Replace(command, string.Empty).Trim();
-                if (answer.Length > 0)
-                {
-                    break;
-                }
+                Thread.Sleep(sleep);
+                answer = port.ReadExisting().Replace("OK", string.Empty).Trim();
+                if (answer.Length > 0) break;
             }
             return answer;
         }
@@ -988,8 +983,6 @@ namespace Program
                 {
                     continue;
                 }
-                // Текстовый режим
-                SendCommand(port: port, command: "AT+CMGF=1", timeout: 1500);
                 /*var imsi = SendCommand(port: port, command: "AT+CIMI", timeout: 3000);
                 if (imsi == "ERROR")
                 {
@@ -1010,25 +1003,33 @@ namespace Program
                 port.Close();
                 portNum++;
             }
+            //new Thread(() => ThreadPortChecker(1)).Start();
             foreach (var portName in ports.Keys) new Thread(() => ThreadPortChecker(int.Parse(portName.Split(" ")[1]))).Start();
 
+        }
+        void SetOptions(SerialPort port)
+        {
+            SendCommand(port: port, command: "ATE0", timeout: 1500);
+            SendCommand(port: port, command: "AT+CMGF=1", timeout: 1500);
         }
         public void ThreadPortChecker(int portNum)
         {
             string answer;
             string _operator;
             using var port = new SerialPort(ports[$"Port {portNum}"]["comName"], 115200, Parity.None, 8, StopBits.One);
-
+            port.Open();
+            SetOptions(port);
             Console.WriteLine($"Port {portNum} ({ports[$"Port {portNum}"]["comName"]}) started.");
             while (true)
             {
                 try
                 {
-                    Thread.Sleep(2300);
+                    Thread.Sleep(1500);
                     if(!port.IsOpen) port.Open();
 
                     var imsi = SendCommand(port, "AT+CIMI", 3000);
-                    if (imsi.Length < 5)
+                    if (imsiRegex.Match(imsi).Value.Length != 0) continue;
+                    else if (imsi.Length < 0)
                     {
                         ports[$"Port {portNum}"]["imsi"] = string.Empty;
                         ports[$"Port {portNum}"]["operator"] = string.Empty;
@@ -1036,7 +1037,7 @@ namespace Program
                         ports[$"Port {portNum}"]["availability"] = false;
                         continue;
                     }
-                    _operator = GetOperator(imsi);
+                    _operator = GetOperator(imsi.ToString());
                     // avab = false | imsi !=
                     if (!ports[$"Port {portNum}"]["availability"] || ports[$"Port {portNum}"]["imsi"] != imsi || ports[$"Port {portNum}"]["phoneNumber"].Length == 0)
                     {
@@ -1046,19 +1047,25 @@ namespace Program
                         ports[$"Port {portNum}"]["availability"] = false;
                         // Удалить все сообщения
                         SendCommand(port, "AT+CMGD=2,4", 1000);
+                        SetOptions(port);
                         // Получить номер
                         if (_operator == "MTS")
                         {
 
                             //SendCommand(port: port, command: "AT+CMGF=1", timeout: 1500);
-                            answer = SendCommand(port, "AT+CUSD=1,\"*111*0887#\",15", 7000);
+                            answer = SendCommand(port, "AT+CUSD=1,\"*111*0887#\",15", 7000, sleep: 200);
                             var answerMessage = HexToString(sendedRegex.Match(answer).Groups[1].Value);
                             if (!answerMessage.Contains("Запрос отправлен")) continue;
-                            for (var i = 0; i < 80; i++)
+                            for (var i = 0; i < 60; i++)
                             {
                                 if (ports[$"Port {portNum}"]["phoneNumber"] != string.Empty) break;
                                 Thread.Sleep(1000);
-                                answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000);
+                                answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000, sleep: 350);
+                                if(answer.Contains("+CMS ERROR: 604"))
+                                {
+                                    SetOptions(port);
+                                    continue;
+                                }
                                 foreach (var message in answer.Split("+CMGL"))
                                 {
                                     var from = fromRegex.Match(message).Groups[1].Value;
@@ -1089,9 +1096,10 @@ namespace Program
                         ports[$"Port {portNum}"]["messages"].Clear();
                         // Для мтс не всегда работает
                         SendCommand(port, "AT+CMGD=2,4", 1000);
+                        continue;
                     }
                     // Получение смс
-                    answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000);
+                    answer = SendCommand(port, "AT+CMGL=\"ALL\"", 7000, sleep: 700);
                     foreach (var message in answer.Split("+CMGL"))
                     {
                         if (message.Length == 0) continue;
@@ -1232,17 +1240,16 @@ namespace Program
         {
             gsmControlClass.Start();
             webserver.Start();
-
             while (true)
             {
                 Thread.Sleep(2000);
                 Console.Clear();
+                Console.WriteLine($"Web server started - {ip}:{port}.");
                 Console.WriteLine($"Count ports: {gsmControlClass.ports.Values.Count}.");
                 for (var i = 1; i <= gsmControlClass.ports.Values.Count; i++)
                 {
                     Console.WriteLine($"Port {i} ({gsmControlClass.ports[$"Port {i}"]["comName"]}) - availability: {gsmControlClass.ports[$"Port {i}"]["availability"]}; messagesCount: {gsmControlClass.ports[$"Port {i}"]["messages"].Count}; phoneNumber: {gsmControlClass.ports[$"Port {i}"]["phoneNumber"]}.");
                 }
-                Console.WriteLine($"Web server started - {ip}:{port}.");
             }
         }
     }
